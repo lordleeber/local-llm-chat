@@ -9,6 +9,7 @@
 ## 使用方式（Windows）
 
 前提：這台電腦已安裝並登入 Tailscale，和 Mac 在同一個 tailnet。
+Mac 端 server 的架設方式見 [README-server.md](README-server.md)。
 
 ### 方法 A：直接開檔案（最簡單）
 
