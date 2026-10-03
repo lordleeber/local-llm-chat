@@ -9,12 +9,14 @@ Win11 瀏覽器 (index.html)
       │  Tailscale
       ▼
 Mac  100.103.191.79:8080  ── mlx_lm.server（launchd 常駐）
-                              └─ mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit
+                              └─ AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
 ```
 
 - 硬體：Apple Silicon MacBook Pro，24 GB 統一記憶體。
-- 模型：Qwen3-14B，MLX 4-bit，檔案約 9.2 GB，載入後約佔 11 GB（含對話快取）。
-- 速度：約 25 tokens/秒。
+- 模型：Qwen3.8-27B 的 abliterated（去審查）版，由 huihui-ai 製作，MLX 4-bit，檔案約 15.1 GB，載入後峰值約 15.5 GB。
+- 速度：生成約 16 tokens/秒，讀 prompt 約 30–50 tokens/秒。
+- 對話快取：每個 token 約 0.065 MB（64 層裡只有 16 層是完整 attention），32K tokens 約 2.2 GB。
+- 思考開關：用 `chat_template_kwargs: {"enable_thinking": false}` 關閉；Qwen3.8 不吃 `/no_think`。
 - server 只監聽 Tailscale IP，不監聽區網或 `0.0.0.0`。`mlx_lm.server` 沒有任何認證，
   開在區網上等於同網段的人都能用。
 
@@ -39,28 +41,31 @@ uv pip install --python .venv/bin/python -U mlx-lm
 ## 2. 下載模型
 
 ```bash
-.venv/bin/hf download mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit
+.venv/bin/hf download AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
 ```
 
 模型會存到 `~/.cache/huggingface/hub/`。
+
+建議加上 `HF_HUB_DISABLE_XET=1`（例如 `HF_HUB_DISABLE_XET=1 .venv/bin/hf download ...`），
+改用一般 HTTP 下載；xet 下載器曾經卡住不動。
 
 如果下載卡住（`.incomplete` 檔的大小很久都不變），重跑 `hf download` 不一定會接續。
 可以改用 `curl` 續傳卡住的分片，再用 sha256 驗證：
 
 ```bash
 # 分片的 sha256 就是 HF 回應標頭 x-linked-etag 的值，也是 blobs/ 底下的檔名
-curl -sIL https://huggingface.co/mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit/resolve/main/model-00001-of-00002.safetensors | grep -i x-linked-etag
+curl -sIL https://huggingface.co/AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit/resolve/main/model-00001-of-00003.safetensors | grep -i x-linked-etag
 
 # 從已下載的部分接著下載
-cp -c ~/.cache/huggingface/hub/models--mlx-community--Josiefied-Qwen3-14B-abliterated-v3-4bit/blobs/<sha>.*.incomplete shard1.part
-curl -L -C - --retry 5 -o shard1.part https://huggingface.co/mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit/resolve/main/model-00001-of-00002.safetensors
+cp -c ~/.cache/huggingface/hub/models--AutisticAF--Huihui-Qwen3.8-27B-abliterated-mlx-4Bit/blobs/<sha>.*.incomplete shard1.part
+curl -L -C - --retry 5 -o shard1.part https://huggingface.co/AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit/resolve/main/model-00001-of-00003.safetensors
 shasum -a 256 shard1.part   # 要和 x-linked-etag 一致
 
 # 放回 HF cache
-D=~/.cache/huggingface/hub/models--mlx-community--Josiefied-Qwen3-14B-abliterated-v3-4bit
+D=~/.cache/huggingface/hub/models--AutisticAF--Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
 mv shard1.part $D/blobs/<sha>
 rm -f $D/blobs/*.incomplete
-ln -s ../../blobs/<sha> $D/snapshots/*/model-00001-of-00002.safetensors
+ln -s ../../blobs/<sha> $D/snapshots/*/model-00001-of-00003.safetensors
 ```
 
 最後再跑一次 `hf download`，它會檢查並補上缺的檔案。
@@ -79,7 +84,7 @@ Tailscale IP 可用 `tailscale ip -4` 查）：
   <key>ProgramArguments</key>
   <array>
     <string>/Users/poyilee/llm/.venv/bin/mlx_lm.server</string>
-    <string>--model</string><string>mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit</string>
+    <string>--model</string><string>AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit</string>
     <string>--host</string><string>100.103.191.79</string>
     <string>--port</string><string>8080</string>
   </array>
@@ -112,7 +117,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.mlx.server.plist
 curl http://100.103.191.79:8080/v1/models
 curl http://100.103.191.79:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"用一句話介紹你自己 /no_think"}],"max_tokens":100}'
+  -d '{"messages":[{"role":"user","content":"用一句話介紹你自己"}],"max_tokens":100,"chat_template_kwargs":{"enable_thinking":false}}'
 ```
 
 第一個請求要多等約 30 秒載入模型。從另一台電腦測時，在瀏覽器開 `/v1/models` 看到 JSON 就代表連得到；
@@ -131,9 +136,15 @@ curl http://100.103.191.79:8080/v1/chat/completions \
 
 ## 注意事項
 
-- **記憶體**：24 GB 跑這個模型會有點緊。server 會快取最近的對話來加快回應，快取會一直變大
-  （曾到 10 段對話、1.57 GB）。Mac 變慢或開始用 swap 時，重啟 server 就能清掉。
+- **記憶體**：24 GB 跑 15 GB 的模型很緊，Chrome、Slack 這類大程式最好關掉。server 會快取最近的對話來加快回應，快取會一直變大
+  （舊的 14B 模型曾到 10 段對話、1.57 GB）。Mac 變慢或開始用 swap 時，重啟 server 就能清掉。
   Docker Desktop 的 VM 會另外佔約 3.5 GB，沒用到時建議關掉，並取消它的開機自動啟動。
 - **Homebrew 升級 Python**：`brew upgrade` 把 Python 3.14 升到新的小版本後，路徑會改變，
   venv 可能壞掉，防火牆也可能重新擋住。遇到時重做第 1 步，並重新允許防火牆。
+- **請求會切換模型**：`mlx_lm.server` 會照請求裡的 `model` 欄位載入模型，HF cache 裡有的模型都會被載入。
+  客戶端還填著舊模型名稱的話，server 會換回舊模型，而且一次只放一個模型。
+  `/v1/models` 會列出 cache 裡所有模型，不代表它們都已經載入。
+- **換模型**：先 `hf download` 新模型，改 plist 裡的 `--model`，再執行 `launchctl bootout` 和 `launchctl bootstrap`。
+  之前用的 `mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`（9.2 GB、約 25 tok/s）還留在 cache 裡，
+  想換回來時改 plist 就行。
 - **安全性**：只開在 Tailscale 上。不要改成 `--host 0.0.0.0`，除非前面另外加上有認證的 reverse proxy。
