@@ -87,6 +87,8 @@ Tailscale IP 可用 `tailscale ip -4` 查）：
     <string>--model</string><string>AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit</string>
     <string>--host</string><string>100.103.191.79</string>
     <string>--port</string><string>8080</string>
+    <string>--chat-template-args</string><string>{"reasoning_effort":"medium"}</string>
+    <string>--prompt-cache-bytes</string><string>1073741824</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>HF_HUB_OFFLINE</key><string>1</string></dict>
@@ -102,6 +104,11 @@ Tailscale IP 可用 `tailscale ip -4` 查）：
 - `KeepAlive`：程式結束就自動重啟；登出 SSH 後也會繼續跑。
 - `HF_HUB_OFFLINE=1`：啟動時不連 Hugging Face 檢查更新，直接用本機的模型。
 - `ThrottleInterval`：開機時 Tailscale 還沒連上的話，綁定 IP 會失敗，launchd 會每 15 秒重試。
+- `--chat-template-args {"reasoning_effort":"medium"}`：Qwen3.8 預設的思考程度是 `xhigh`，會在 system prompt 加上
+  「仔細思考、驗證假設」的指示，常常想到用光 `max_tokens`，結果只有思考、沒有回答。`medium` 就是不加這段指示。
+  請求裡帶的 `chat_template_kwargs` 會跟這個值合併；請求有指定 `reasoning_effort` 時，以請求的為準。
+- `--prompt-cache-bytes 1073741824`：對話快取上限 1 GB，超過時丟掉最舊的。不設的話快取會一直長，
+  最後 GPU 記憶體不足（見下方注意事項）。
 
 啟動：
 
@@ -137,7 +144,12 @@ curl http://100.103.191.79:8080/v1/chat/completions \
 ## 注意事項
 
 - **記憶體**：24 GB 跑 15 GB 的模型很緊，Chrome、Slack 這類大程式最好關掉。server 會快取最近的對話來加快回應，快取會一直變大
-  （舊的 14B 模型曾到 10 段對話、1.57 GB）。Mac 變慢或開始用 swap 時，重啟 server 就能清掉。
+  （27B 模型聊不到 10 則就到 1.7 GB），所以 plist 裡設了 `--prompt-cache-bytes` 1 GB 上限。
+  閒置太久時，macOS 可能把模型權重壓縮或寫進 swap，下一個請求會很慢；重啟 server 可以恢復。
+- **GPU 記憶體不足（OOM）**：症狀是送出後一直沒有回答，server 仍回 HTTP 200，launchd 也看不出異常。
+  log 裡會有 `[METAL] Command buffer execution failed: Insufficient Memory`，負責生成的執行緒已經死掉，
+  之後每個請求都不會有回應，一定要重啟 server。檢查方式：`grep -i 'insufficient memory' ~/llm/logs/server.log`。
+  曾在模型 15.1 GB 加上 1.68 GB 對話快取時發生；設了快取上限還是會發生的話，就要換更小的模型。
   Docker Desktop 的 VM 會另外佔約 3.5 GB，沒用到時建議關掉，並取消它的開機自動啟動。
 - **Homebrew 升級 Python**：`brew upgrade` 把 Python 3.14 升到新的小版本後，路徑會改變，
   venv 可能壞掉，防火牆也可能重新擋住。遇到時重做第 1 步，並重新允許防火牆。
@@ -145,6 +157,7 @@ curl http://100.103.191.79:8080/v1/chat/completions \
   客戶端還填著舊模型名稱的話，server 會換回舊模型，而且一次只放一個模型。
   `/v1/models` 會列出 cache 裡所有模型，不代表它們都已經載入。
 - **換模型**：先 `hf download` 新模型，改 plist 裡的 `--model`，再執行 `launchctl bootout` 和 `launchctl bootstrap`。
-  之前用的 `mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`（9.2 GB、約 25 tok/s）還留在 cache 裡，
-  想換回來時改 plist 就行。
+  刪掉不用的模型：`hf cache rm model/<repo id>`（可先加 `--dry-run` 預覽）。
+- **不推薦 `mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`**：最初用的模型（9.2 GB、約 25 tok/s），
+  實際使用起來不好用，已經換掉並從 cache 刪除，之後不要再換回來。
 - **安全性**：只開在 Tailscale 上。不要改成 `--host 0.0.0.0`，除非前面另外加上有認證的 reverse proxy。
