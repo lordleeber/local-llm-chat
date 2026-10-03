@@ -52,8 +52,9 @@ def make_handler(target, proxy):
             try:
                 conn.request(self.command, t.path.rstrip("/") + self.path, body=body, headers=headers)
                 resp = conn.getresponse()
-            except OSError as e:
-                self.send_error(502, f"Cannot reach {target}: {e}")
+            except (OSError, http.client.HTTPException) as e:
+                # Detail goes in the body: the status line must be Latin-1, and Windows socket errors are localized.
+                self.send_error(502, "Bad Gateway", f"Cannot reach {target}: {e}")
                 return
             self.send_response(resp.status)
             for k, v in resp.getheaders():
@@ -69,8 +70,8 @@ def make_handler(target, proxy):
                         break
                     self.wfile.write(chunk)
                     self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass  # browser pressed stop
+            except (OSError, http.client.HTTPException):
+                pass  # browser pressed stop (ConnectionAbortedError on Windows), or upstream stalled/broke
             finally:
                 conn.close()
                 self.close_connection = True

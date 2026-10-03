@@ -199,7 +199,8 @@ const store = {
 };
 
 let settings = { ...DEFAULTS, ...store.get("llmchat.settings", {}) };
-if (SERVED_WITH_PROXY) settings.baseUrl = DEFAULTS.baseUrl;
+// The proxy URL is never saved, but older versions did; without --proxy it would 404.
+if (SERVED_WITH_PROXY || settings.baseUrl === location.origin + "/v1") settings.baseUrl = DEFAULTS.baseUrl;
 let conversations = store.get("llmchat.conversations", []);
 let currentId = store.get("llmchat.current", null);
 let abortCtrl = null;
@@ -217,7 +218,9 @@ function saveSettingsFromUI() {
   settings.temperature = settings.temperature === "" ? DEFAULTS.temperature : parseFloat(settings.temperature);
   settings.noThink = $("noThink").checked;
   settings.expandThink = $("expandThink").checked;
-  store.set("llmchat.settings", settings);
+  // In proxy mode baseUrl is forced to this origin; keep the saved one so non-proxy pages are unaffected.
+  const saved = SERVED_WITH_PROXY ? { ...settings, baseUrl: store.get("llmchat.settings", {}).baseUrl } : settings;
+  store.set("llmchat.settings", saved);
 }
 for (const f of [...SETTING_FIELDS, "noThink", "expandThink"]) $(f).addEventListener("change", saveSettingsFromUI);
 $("resetSettings").onclick = () => { settings = { ...DEFAULTS }; loadSettingsUI(); saveSettingsFromUI(); };
@@ -441,7 +444,7 @@ async function send() {
   abortCtrl = new AbortController();
   $("sendBtn").hidden = true; $("stopBtn").hidden = false;
   const started = performance.now();
-  let firstTokenAt = null, completionTokens = null, chunks = 0;
+  let firstTokenAt = null, completionTokens = null, chunks = 0, rafId = 0;
 
   try {
     const r = await fetch(apiUrl("/chat/completions"), {
@@ -490,7 +493,7 @@ async function send() {
         if (delta.reasoning) reply.reasoning += delta.reasoning;
         if (delta.reasoning_content) reply.reasoning += delta.reasoning_content;
         if (piece) chunks++;
-        if (!pending) { pending = true; requestAnimationFrame(repaint); }
+        if (!pending) { pending = true; rafId = requestAnimationFrame(repaint); }
       }
     }
   } catch (e) {
@@ -500,6 +503,7 @@ async function send() {
         "以及設定中的 Base URL 正確。若是瀏覽器擋跨網域請求，請改用 serve.py 的 proxy 模式（見 README）。";
     } else reply.error = "錯誤：" + e.message;
   } finally {
+    cancelAnimationFrame(rafId); // a pending streaming repaint would overwrite the final render below
     const end = performance.now();
     const tokens = completionTokens ?? chunks;
     const genSecs = firstTokenAt ? (end - firstTokenAt) / 1000 : 0;
