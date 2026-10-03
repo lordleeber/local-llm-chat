@@ -4,7 +4,7 @@
 只有一個 `index.html`，不需要安裝任何東西。
 
 功能：串流回覆、多個對話（存在瀏覽器裡）、Markdown／程式碼／表格、Qwen3 思考過程可收合、
-「不思考（/no_think）」開關、停止生成、顯示 tokens/秒。
+「不思考」開關、停止生成、顯示 tokens/秒。
 
 ## 使用方式（Windows）
 
@@ -17,7 +17,7 @@ Mac 端 server 的架設方式見 [README-server.md](README-server.md)。
 2. 雙擊 `index.html`，用 Edge 或 Chrome 開啟。
 3. 左下角「設定」預設已填好：
    - API Base URL：`http://100.103.191.79:8080/v1`
-   - 模型：`mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`
+   - 模型：`AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit`
 4. 按「測試連線」，看到 ✓ 就可以開始聊天。
 
 `mlx_lm.server` 預設會送 CORS 標頭（`--allowed-origins` 預設 `*`），所以直接開檔案就能連。
@@ -36,7 +36,10 @@ Mac 端 server 的架設方式見 [README-server.md](README-server.md)。
 ## 小提醒
 
 - Mac 上的 server 重啟後，第一個請求要多等約 30 秒載入模型。
-- 勾選「不思考」會在訊息結尾加上 `/no_think`，跳過思考，回得比較快。
+- 勾選「不思考」會在請求裡送 `chat_template_kwargs: {"enable_thinking": false}`，跳過思考，回得比較快。
+  Qwen3.8 不吃訊息結尾的 `/no_think`，加了反而會照常思考。
+- 之前存過舊模型名稱（Josiefied-Qwen3-14B）的設定，打開網頁時會自動換成新模型。
+  `mlx_lm.server` 會照請求裡的模型名稱切換模型，所以其他客戶端（例如 Chatbox）也要記得改模型名稱。
 - 對話記錄只存在這台電腦的瀏覽器裡（localStorage）。
 - Markdown 顯示用到 jsDelivr CDN；離線時會改成純文字顯示，聊天功能不受影響。
 
@@ -44,4 +47,4 @@ Mac 端 server 的架設方式見 [README-server.md](README-server.md)。
 
 也可以用 Chatbox、Open WebUI 等支援 OpenAI 相容 API 的客戶端，設定相同：
 API Host `http://100.103.191.79:8080`（有些要填到 `/v1`）、API Key 隨便填（例如 `none`）、
-模型 `mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`。
+模型 `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit`。

@@ -156,8 +156,8 @@
       <textarea id="input" rows="2" placeholder="輸入訊息，Enter 送出，Shift+Enter 換行"></textarea>
       <div class="row">
         <button id="toggleSidebar">☰</button>
-        <label title="在訊息結尾加上 /no_think，跳過 Qwen3 的思考過程，回得比較快">
-          <input type="checkbox" id="noThink"> 不思考（/no_think）
+        <label title="送出 enable_thinking: false，跳過 Qwen 的思考過程，回得比較快">
+          <input type="checkbox" id="noThink"> 不思考
         </label>
         <label title="思考內容預設展開">
           <input type="checkbox" id="expandThink"> 展開思考
@@ -178,7 +178,7 @@ const SERVED_WITH_PROXY = location.protocol.startsWith("http") && location.searc
 
 const DEFAULTS = {
   baseUrl: SERVED_WITH_PROXY ? location.origin + "/v1" : "http://100.103.191.79:8080/v1",
-  model: "mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit",
+  model: "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit",
   apiKey: "none",
   maxTokens: 4096,
   temperature: 0.7,
@@ -201,6 +201,8 @@ const store = {
 let settings = { ...DEFAULTS, ...store.get("llmchat.settings", {}) };
 // The proxy URL is never saved, but older versions did; without --proxy it would 404.
 if (SERVED_WITH_PROXY || settings.baseUrl === location.origin + "/v1") settings.baseUrl = DEFAULTS.baseUrl;
+// mlx_lm.server loads whatever model a request names, so a saved old default would swap the server back to it.
+if (settings.model === "mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit") settings.model = DEFAULTS.model;
 let conversations = store.get("llmchat.conversations", []);
 let currentId = store.get("llmchat.current", null);
 let abortCtrl = null;
@@ -427,7 +429,7 @@ async function send() {
   saveSettingsFromUI();
   if (!current()) newConversation();
   const c = current();
-  const userMsg = { role: "user", content: text, sent: settings.noThink ? text + " /no_think" : text };
+  const userMsg = { role: "user", content: text };
   c.messages.push(userMsg);
   if (c.messages.length === 1) c.title = text.slice(0, 30);
   $("input").value = ""; autoGrow();
@@ -458,6 +460,7 @@ async function send() {
         temperature: settings.temperature,
         stream: true,
         stream_options: { include_usage: true },
+        chat_template_kwargs: { enable_thinking: !settings.noThink },
       }),
     });
     if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 300));
