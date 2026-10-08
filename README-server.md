@@ -8,7 +8,7 @@
 Win11 瀏覽器 (index.html)
       │  Tailscale
       ▼
-Mac  100.103.191.79:8080  ── mlx_lm.server（launchd 常駐）
+Mac  100.103.191.79:8080  ── mlx_lm.server（在 tmux 裡手動啟動）
                               └─ AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
 ```
 
@@ -70,53 +70,33 @@ ln -s ../../blobs/<sha> $D/snapshots/*/model-00001-of-00003.safetensors
 
 最後再跑一次 `hf download`，它會檢查並補上缺的檔案。
 
-## 3. 用 launchd 常駐
+## 3. 用 tmux 啟動
 
-建立 `~/Library/LaunchAgents/ai.mlx.server.plist`（路徑和 IP 要換成自己的；
-Tailscale IP 可用 `tailscale ip -4` 查）：
+用 tmux 手動開，關掉 SSH 也會繼續跑（IP 要換成自己的；Tailscale IP 可用 `tailscale ip -4` 查）：
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>ai.mlx.server</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/poyilee/llm/.venv/bin/mlx_lm.server</string>
-    <string>--model</string><string>AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit</string>
-    <string>--host</string><string>100.103.191.79</string>
-    <string>--port</string><string>8080</string>
-    <string>--chat-template-args</string><string>{"reasoning_effort":"medium"}</string>
-    <string>--prompt-cache-bytes</string><string>1073741824</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict><key>HF_HUB_OFFLINE</key><string>1</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>15</integer>
-  <key>StandardOutPath</key><string>/Users/poyilee/llm/logs/server.log</string>
-  <key>StandardErrorPath</key><string>/Users/poyilee/llm/logs/server.log</string>
-</dict>
-</plist>
+```bash
+mkdir -p ~/llm/logs
+tmux new -s llm
+HF_HUB_OFFLINE=1 ~/llm/.venv/bin/mlx_lm.server \
+  --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit \
+  --host 100.103.191.79 --port 8080 \
+  --chat-template-args '{"reasoning_effort":"medium"}' \
+  --prompt-cache-bytes 1073741824 \
+  2>&1 | tee -a ~/llm/logs/server.log
 ```
 
-- `KeepAlive`：程式結束就自動重啟；登出 SSH 後也會繼續跑。
+按 `Ctrl-b d` 離開 tmux，server 會在背景繼續跑；`tmux attach -t llm` 可以回去看。
+
 - `HF_HUB_OFFLINE=1`：啟動時不連 Hugging Face 檢查更新，直接用本機的模型。
-- `ThrottleInterval`：開機時 Tailscale 還沒連上的話，綁定 IP 會失敗，launchd 會每 15 秒重試。
 - `--chat-template-args {"reasoning_effort":"medium"}`：Qwen3.8 預設的思考程度是 `xhigh`，會在 system prompt 加上
   「仔細思考、驗證假設」的指示，常常想到用光 `max_tokens`，結果只有思考、沒有回答。`medium` 就是不加這段指示。
   請求裡帶的 `chat_template_kwargs` 會跟這個值合併；請求有指定 `reasoning_effort` 時，以請求的為準。
 - `--prompt-cache-bytes 1073741824`：對話快取上限 1 GB，超過時丟掉最舊的。不設的話快取會一直長，
   最後 GPU 記憶體不足（見下方注意事項）。
+- `tee -a`：畫面上看得到 log，同時寫進 `~/llm/logs/server.log`，方便之後 `grep`。
 
-啟動：
-
-```bash
-mkdir -p ~/llm/logs
-plutil -lint ~/Library/LaunchAgents/ai.mlx.server.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.mlx.server.plist
-```
+這樣開的 server 不會自動重啟：程式掛掉、Mac 重開機之後，都要手動再開一次。
+Tailscale 還沒連上時綁定 IP 會失敗，等 Tailscale 連上再開。
 
 ## 4. 驗證
 
@@ -135,18 +115,18 @@ curl http://100.103.191.79:8080/v1/chat/completions \
 | 要做的事 | 指令 |
 |---|---|
 | 看 log（含每個請求的來源 IP） | `tail -f ~/llm/logs/server.log` |
-| 看狀態 | `launchctl print gui/$(id -u)/ai.mlx.server \| grep -E 'state\|pid'` |
-| 重啟（也會清掉對話快取） | `launchctl kickstart -k gui/$(id -u)/ai.mlx.server` |
-| 停止 | `launchctl bootout gui/$(id -u)/ai.mlx.server` |
-| 再啟動 | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.mlx.server.plist` |
+| 回到 server 畫面 | `tmux attach -t llm`（`Ctrl-b d` 離開） |
+| 看有沒有在跑 | `pgrep -fl mlx_lm.server` |
+| 停止 | 在 tmux 裡按 `Ctrl-C` |
+| 重啟（也會清掉對話快取） | 在 tmux 裡 `Ctrl-C`，再按 `↑` 和 Enter 重跑同一個指令 |
 | 看記憶體 | `top -l 1 \| grep PhysMem`、`sysctl vm.swapusage` |
 
 ## 注意事項
 
 - **記憶體**：24 GB 跑 15 GB 的模型很緊，Chrome、Slack 這類大程式最好關掉。server 會快取最近的對話來加快回應，快取會一直變大
-  （27B 模型聊不到 10 則就到 1.7 GB），所以 plist 裡設了 `--prompt-cache-bytes` 1 GB 上限。
+  （27B 模型聊不到 10 則就到 1.7 GB），所以啟動指令裡設了 `--prompt-cache-bytes` 1 GB 上限。
   閒置太久時，macOS 可能把模型權重壓縮或寫進 swap，下一個請求會很慢；重啟 server 可以恢復。
-- **GPU 記憶體不足（OOM）**：症狀是送出後一直沒有回答，server 仍回 HTTP 200，launchd 也看不出異常。
+- **GPU 記憶體不足（OOM）**：症狀是送出後一直沒有回答，server 仍回 HTTP 200，程式也沒有結束。
   log 裡會有 `[METAL] Command buffer execution failed: Insufficient Memory`，負責生成的執行緒已經死掉，
   之後每個請求都不會有回應，一定要重啟 server。檢查方式：`grep -i 'insufficient memory' ~/llm/logs/server.log`。
   曾在模型 15.1 GB 加上 1.68 GB 對話快取時發生；設了快取上限還是會發生的話，就要換更小的模型。
@@ -156,7 +136,7 @@ curl http://100.103.191.79:8080/v1/chat/completions \
 - **請求會切換模型**：`mlx_lm.server` 會照請求裡的 `model` 欄位載入模型，HF cache 裡有的模型都會被載入。
   客戶端還填著舊模型名稱的話，server 會換回舊模型，而且一次只放一個模型。
   `/v1/models` 會列出 cache 裡所有模型，不代表它們都已經載入。
-- **換模型**：先 `hf download` 新模型，改 plist 裡的 `--model`，再執行 `launchctl bootout` 和 `launchctl bootstrap`。
+- **換模型**：先 `hf download` 新模型，停掉 server，改啟動指令裡的 `--model` 再重開。
   刪掉不用的模型：`hf cache rm model/<repo id>`（可先加 `--dry-run` 預覽）。
 - **不推薦 `mlx-community/Josiefied-Qwen3-14B-abliterated-v3-4bit`**：最初用的模型（9.2 GB、約 25 tok/s），
   實際使用起來不好用，已經換掉並從 cache 刪除，之後不要再換回來。
